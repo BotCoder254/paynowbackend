@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        /* Base styles */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.5;
+            color: #1a1a1a;
+            margin: 0;
+            padding: 0;
+            background-color: #f9fafb;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .header {
+            text-align: center;
+            padding: 20px 0;
+            border-bottom: 2px solid #f3f4f6;
+        }
+        .logo {
+            font-size: 24px;
+            font-weight: bold;
+            color: #4f46e5;
+            text-decoration: none;
+        }
+        .content {
+            padding: 24px 0;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 8px 16px;
+            background-color: #10b981;
+            color: white;
+            border-radius: 9999px;
+            font-weight: 500;
+            margin: 16px 0;
+        }
+        .status-processing { background-color: #f59e0b; }
+        .status-shipped { background-color: #10b981; }
+        .status-delivered { background-color: #4f46e5; }
+        .footer {
+            text-align: center;
+            padding: 20px 0;
+            color: #6b7280;
+            font-size: 14px;
+            border-top: 2px solid #f3f4f6;
+        }
+        .button {
+            display: inline-block;
+            padding: 12px 24px;
+            background-color: #4f46e5;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: 500;
+            margin: 16px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">LuxeCarts</div>
+        </div>
+        
+        <div class="content">
+            <h1 style="font-size: 24px; margin-bottom: 16px;">Order Status Update</h1>
+            <p>Dear {{customerName}},</p>
+            <p>We're writing to inform you about an update to your order #{{orderNumber}}.</p>
+            
+            <div style="text-align: center;">
+                <div class="status-badge status-{{newStatus}}">
+                    Status: {{newStatus}}
+                </div>
+            </div>
+            
+            <div style="margin: 24px 0;">
+                <h3 style="font-size: 18px; margin-bottom: 12px;">Order Details</h3>
+                <p><strong>Order Number:</strong> {{orderNumber}}</p>
+                <p><strong>Order Date:</strong> {{orderDate}}</p>
+                <p><strong>New Status:</strong> {{newStatus}}</p>
+            </div>
+            
+            {{#if newStatus}}
+                {{#eq newStatus "processing"}}
+                    <p>Your order is currently being processed in our warehouse.</p>
+                {{/eq}}
+                {{#eq newStatus "shipped"}}
+                    <p>Great news! Your order has been shipped and is on its way to you.</p>
+                {{/eq}}
+                {{#eq newStatus "delivered"}}
+                    <p>Your order has been delivered! We hope you enjoy your purchase.</p>
+                {{/eq}}
+            {{/if}}
+            
+            <div style="text-align: center;">
+                <a href="https://luxecarts.com/orders/{{orderNumber}}" class="button">View Order Details</a>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>If you have any questions, please contact our customer support.</p>
+            <p>&copy; 2024 LuxeCarts. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html> 

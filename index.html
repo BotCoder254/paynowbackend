@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>M-Pesa Integration</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="bg-gray-50 min-h-screen font-['Inter']">
+    <div class="container mx-auto px-4 py-8">
+        <!-- Header -->
+        <div class="text-center mb-12">
+            <h1 class="text-4xl font-bold text-gray-900 mb-2">M-Pesa Payment Integration</h1>
+            <p class="text-gray-600">Test your M-Pesa API integration with ease</p>
+        </div>
+
+        <!-- Main Content -->
+        <div class="max-w-md mx-auto bg-white rounded-xl shadow-md overflow-hidden md:max-w-2xl p-6">
+            <!-- Payment Form -->
+            <form id="paymentForm" class="space-y-6">
+                <div>
+                    <label for="phone" class="block text-sm font-medium text-gray-700">Phone Number</label>
+                    <div class="mt-1">
+                        <input type="tel" name="phone" id="phone" 
+                               class="shadow-sm focus:ring-green-500 focus:border-green-500 block w-full sm:text-sm border-gray-300 rounded-md"
+                               placeholder="254712345678">
+                    </div>
+                </div>
+
+                <div>
+                    <label for="amount" class="block text-sm font-medium text-gray-700">Amount (KES)</label>
+                    <div class="mt-1">
+                        <input type="number" name="amount" id="amount" 
+                               class="shadow-sm focus:ring-green-500 focus:border-green-500 block w-full sm:text-sm border-gray-300 rounded-md"
+                               placeholder="1">
+                    </div>
+                </div>
+
+                <div>
+                    <button type="submit" 
+                            class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
+                        Pay with M-Pesa
+                    </button>
+                </div>
+            </form>
+
+            <!-- Transaction Status -->
+            <div id="transactionStatus" class="mt-8 hidden">
+                <h3 class="text-lg font-medium text-gray-900 mb-4">Transaction Status</h3>
+                <div class="bg-gray-50 p-4 rounded-md">
+                    <p id="statusMessage" class="text-sm text-gray-600"></p>
+                    <p id="checkoutRequestId" class="text-sm text-gray-500 mt-2"></p>
+                </div>
+                <button id="queryStatus" 
+                        class="mt-4 w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-green-700 bg-green-100 hover:bg-green-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
+                    Check Status
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('paymentForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const phone = document.getElementById('phone').value;
+            const amount = document.getElementById('amount').value;
+
+            try {
+                const response = await fetch('http://localhost:3000/stkpush', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ phone, amount })
+                });
+
+                const data = await response.json();
+                
+                if (data.ResponseCode === "0") {
+                    document.getElementById('transactionStatus').classList.remove('hidden');
+                    document.getElementById('statusMessage').textContent = data.CustomerMessage;
+                    document.getElementById('checkoutRequestId').textContent = `Checkout Request ID: ${data.CheckoutRequestID}`;
+                } else {
+                    alert('Error: ' + data.errorMessage);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Error processing payment');
+            }
+        });
+
+        document.getElementById('queryStatus').addEventListener('click', async () => {
+            const checkoutRequestId = document.getElementById('checkoutRequestId').textContent.split(': ')[1];
+            
+            try {
+                const response = await fetch('http://localhost:3000/query', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ queryCode: checkoutRequestId })
+                });
+
+                const data = await response.json();
+                document.getElementById('statusMessage').textContent = data.ResultDesc || 'Transaction status: ' + data.ResponseDescription;
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Error checking transaction status');
+            }
+        });
+    </script>
+</body>
+</html> 
