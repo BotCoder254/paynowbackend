@@ -11,6 +11,8 @@ const {
   sendOrderStatusUpdateEmail, 
   sendOrderCancellationEmail 
 } = require('./emailService');
+const { processTransactionInvoice, storeCustomerInformation } = require('./invoiceService');
+const { checkUnpaidLinks, sendManualReminder } = require('./reminderService');
 
 // Add environment variables for email configuration
 require('dotenv').config();
@@ -501,10 +503,40 @@ app.post("/callback/:orderId", async (req, res) => {
           LastName: lastName
         }
       });
+      
+      // Generate invoice for successful payments
+      if (newStatus === 'success') {
+        try {
+          // Update transaction with customer information
+          const updatedTransactionData = {
+            ...transactionData,
+            status: newStatus,
+            mpesaReceiptNumber: mpesaReceiptNumber,
+            payerPhone: phoneNumber,
+            payerName: `${firstName} ${middleName} ${lastName}`.trim(),
+          };
+          
+          // Store customer information
+          await storeCustomerInformation(updatedTransactionData);
+          
+          // Generate and store invoice
+          const invoiceUrl = await processTransactionInvoice(updatedTransactionData);
+          console.log('Invoice generated successfully:', invoiceUrl);
+        } catch (invoiceError) {
+          console.error('Error generating invoice:', invoiceError);
+          // Don't fail the callback if invoice generation fails
+        }
+      }
 
       // Send SMS notification if successful
       if (newStatus === 'success') {
-        const message = `Thank you for your payment of KES ${transactionData.amount} for ${transactionData.description}! Your transaction was successful. Receipt: ${mpesaReceiptNumber}. Transaction ID: ${orderId.substring(0, 8)}. Thank you for using PayNow.`;
+        // Include invoice link in the SMS if available
+        let invoiceMessage = '';
+        if (transactionData.invoiceUrl) {
+          invoiceMessage = ` Your invoice is available at: ${transactionData.invoiceUrl}`;
+        }
+        
+        const message = `Thank you for your payment of KES ${transactionData.amount} for ${transactionData.description}! Your transaction was successful. Receipt: ${mpesaReceiptNumber}. Transaction ID: ${orderId.substring(0, 8)}.${invoiceMessage} Thank you for using PayNow.`;
         try {
           await sendSMSNotification(transactionData.payerPhone, message);
           console.log('SMS notification sent successfully to:', transactionData.payerPhone);
@@ -828,6 +860,72 @@ app.post("/cancel-order", async (req, res) => {
 });
 
 const PORT = 8000; // Changed port to 8000
+// Add endpoint for checking unpaid links and sending reminders
+app.post("/check-unpaid-links", async (req, res) => {
+  try {
+    console.log('Received request to check unpaid links');
+    const processedLinks = await checkUnpaidLinks();
+    
+    res.json({
+      ResponseCode: "0",
+      message: `Processed ${processedLinks.length} links for reminders`,
+      processedLinks
+    });
+  } catch (error) {
+    console.error('Error checking unpaid links:', error);
+    res.status(500).json({
+      ResponseCode: "1",
+      errorMessage: error.message || "Failed to check unpaid links"
+    });
+  }
+});
+
+// Add endpoint for sending manual reminders
+app.post("/send-reminder", async (req, res) => {
+  try {
+    const { linkId, phoneNumber, reminderType } = req.body;
+    
+    if (!linkId || !phoneNumber) {
+      return res.status(400).json({
+        ResponseCode: "1",
+        errorMessage: "Link ID and phone number are required"
+      });
+    }
+    
+    const result = await sendManualReminder(linkId, phoneNumber, reminderType || 'manual');
+    
+    if (result.success) {
+      res.json({
+        ResponseCode: "0",
+        message: result.message,
+        result
+      });
+    } else {
+      res.status(400).json({
+        ResponseCode: "1",
+        errorMessage: result.message,
+        result
+      });
+    }
+  } catch (error) {
+    console.error('Error sending manual reminder:', error);
+    res.status(500).json({
+      ResponseCode: "1",
+      errorMessage: error.message || "Failed to send reminder"
+    });
+  }
+});
+
+// Schedule automatic reminder checks (every hour)
+setInterval(async () => {
+  try {
+    console.log('Running scheduled check for unpaid links...');
+    await checkUnpaidLinks();
+  } catch (error) {
+    console.error('Error in scheduled unpaid links check:', error);
+  }
+}, 60 * 60 * 1000); // 1 hour
+
 app.listen(PORT, () => {
   console.log(`M-Pesa API Server is running on port ${PORT}`);
 });

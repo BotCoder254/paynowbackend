@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Your Invoice</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      margin: 0;
+      padding: 0;
+    }
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .header {
+      text-align: center;
+      padding: 20px 0;
+      border-bottom: 1px solid #eee;
+    }
+    .logo {
+      font-size: 24px;
+      font-weight: bold;
+      color: #4F46E5;
+    }
+    .content {
+      padding: 20px 0;
+    }
+    .footer {
+      text-align: center;
+      padding: 20px 0;
+      font-size: 12px;
+      color: #666;
+      border-top: 1px solid #eee;
+    }
+    .button {
+      display: inline-block;
+      background-color: #4F46E5;
+      color: white;
+      text-decoration: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      margin-top: 20px;
+    }
+    .details {
+      background-color: #f9f9f9;
+      padding: 15px;
+      border-radius: 4px;
+      margin: 20px 0;
+    }
+    .details p {
+      margin: 5px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">PayNow</div>
+    </div>
+    
+    <div class="content">
+      <h2>Invoice for Your Payment</h2>
+      
+      <p>Hello {{customerName}},</p>
+      
+      <p>Thank you for your payment. Your invoice is ready and attached below.</p>
+      
+      <div class="details">
+        <p><strong>Transaction ID:</strong> {{transactionId}}</p>
+        <p><strong>Amount:</strong> {{currency}} {{amount}}</p>
+        <p><strong>Date:</strong> {{date}}</p>
+      </div>
+      
+      <p>You can view or download your invoice by clicking the button below:</p>
+      
+      <a href="{{invoiceUrl}}" class="button" target="_blank">View Invoice</a>
+      
+      <p>If you have any questions about this invoice, please contact us.</p>
+      
+      <p>Thank you for your business!</p>
+    </div>
+    
+    <div class="footer">
+      <p>This is an automated email, please do not reply.</p>
+      <p>&copy; {{currentYear}} PayNow. All rights reserved.</p>
+    </div>
+  </div>
+</body>
+</html>
