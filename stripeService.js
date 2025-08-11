@@ -45,7 +45,7 @@ const getStripeInstance = async (merchantId) => {
     return stripe(DEFAULT_STRIPE_SECRET_KEY);
   }
 };
-const { doc, updateDoc, serverTimestamp, getDoc } = require("firebase/firestore");
+const { doc, updateDoc, serverTimestamp } = require("firebase/firestore");
 const { db } = require("./firebase");
 const { sendPaymentConfirmationEmail } = require("./emailService");
 
