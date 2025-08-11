@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Verification Update</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      margin: 0;
+      padding: 0;
+    }
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .header {
+      background-color: #4f46e5;
+      padding: 20px;
+      text-align: center;
+      color: white;
+    }
+    .content {
+      padding: 20px;
+      background-color: #f9fafb;
+    }
+    .footer {
+      padding: 20px;
+      text-align: center;
+      font-size: 12px;
+      color: #6b7280;
+    }
+    .button {
+      display: inline-block;
+      background-color: #4f46e5;
+      color: white;
+      text-decoration: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      margin-top: 20px;
+    }
+    .reason-box {
+      background-color: #fee2e2;
+      border-left: 4px solid #ef4444;
+      padding: 15px;
+      margin: 20px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Verification Update</h1>
+    </div>
+    <div class="content">
+      <p>Hello {{displayName}},</p>
+      
+      <p>Thank you for submitting your verification request for <strong>{{businessName}}</strong> on PayNow.</p>
+      
+      <p>After reviewing your application, we need some additional information or clarification before we can approve your verification.</p>
+      
+      <div class="reason-box">
+        <strong>Reason:</strong>
+        <p>{{rejectionReason}}</p>
+      </div>
+      
+      <p>What to do next:</p>
+      <ol>
+        <li>Log in to your PayNow dashboard</li>
+        <li>Go to the Verification section</li>
+        <li>Update your information based on the feedback above</li>
+        <li>Resubmit your verification request</li>
+      </ol>
+      
+      <p>If you need assistance with your verification, our support team is available to help.</p>
+      
+      <a href="https://paynow.com/dashboard/verification" class="button">Update Verification</a>
+      
+      <p>Thank you for your understanding and cooperation.</p>
+      
+      <p>Best regards,<br>The PayNow Team</p>
+    </div>
+    <div class="footer">
+      <p>© 2023 PayNow. All rights reserved.</p>
+      <p>This is an automated email, please do not reply to this message.</p>
+    </div>
+  </div>
+</body>
+</html>

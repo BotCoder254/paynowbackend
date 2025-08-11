@@ -883,6 +883,37 @@ app.post("/cancel-order", async (req, res) => {
   }
 });
 
+// Add verification notification endpoint
+app.post("/api/notifications/verification", async (req, res) => {
+  try {
+    const { userId, status, rejectionReason, adminId } = req.body;
+    
+    if (!userId || !status || !adminId) {
+      return res.status(400).json({
+        ResponseCode: "1",
+        errorMessage: "Missing required parameters"
+      });
+    }
+    
+    // Import verification service
+    const { updateVerificationStatus } = require('./verificationService');
+    
+    // Update verification status and send notifications
+    const result = await updateVerificationStatus(userId, status, rejectionReason || '', adminId);
+    
+    res.json({
+      ResponseCode: "0",
+      message: `Verification ${status} notification sent successfully`
+    });
+  } catch (error) {
+    console.error('Error sending verification notification:', error);
+    res.status(500).json({
+      ResponseCode: "1",
+      errorMessage: error.message || "Failed to send verification notification"
+    });
+  }
+});
+
 const PORT = 8000; // Changed port to 8000
 // Add endpoint for checking unpaid links and sending reminders
 app.post("/check-unpaid-links", async (req, res) => {

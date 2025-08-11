@@ -104,7 +104,16 @@ const generateInvoicePDF = async (transactionData) => {
       doc.fontSize(12);
       doc.text(`Invoice Number: ${transactionData.id}`, 50, 140);
       doc.text(`Date: ${new Date().toLocaleDateString()}`, 50, 160);
-      doc.text(`Receipt Number: ${transactionData.mpesaReceiptNumber || 'N/A'}`, 50, 180);
+      // Show receipt number based on payment method
+      if (transactionData.paymentProcessor === 'mpesa') {
+        doc.text(`M-Pesa Receipt: ${transactionData.mpesaReceiptNumber || 'N/A'}`, 50, 180);
+      } else if (transactionData.paymentProcessor === 'stripe') {
+        doc.text(`Card Payment ID: ${transactionData.stripePaymentId || 'N/A'}`, 50, 180);
+      } else if (transactionData.paymentProcessor === 'paystack') {
+        doc.text(`Paystack Reference: ${transactionData.paystackReference || 'N/A'}`, 50, 180);
+      } else {
+        doc.text(`Receipt Number: ${transactionData.mpesaReceiptNumber || transactionData.stripePaymentId || transactionData.paystackReference || 'N/A'}`, 50, 180);
+      }
       
       // Add customer information
       doc.text('Bill To:', 50, 220);
@@ -137,8 +146,32 @@ const generateInvoicePDF = async (transactionData) => {
       doc.moveDown(4);
       doc.font('Helvetica');
       doc.text('Payment Information', 50, invoiceTableTop + 120);
-      doc.text(`Payment Method: M-Pesa`, 50, invoiceTableTop + 140);
-      doc.text(`Transaction ID: ${transactionData.mpesaReceiptNumber || transactionData.id}`, 50, invoiceTableTop + 160);
+      // Display payment method based on processor
+      let paymentMethod = 'Unknown';
+      if (transactionData.paymentProcessor === 'mpesa') {
+        paymentMethod = 'M-Pesa';
+      } else if (transactionData.paymentProcessor === 'stripe') {
+        paymentMethod = 'Credit/Debit Card';
+      } else if (transactionData.paymentProcessor === 'paystack') {
+        paymentMethod = 'Paystack';
+      }
+      doc.text(`Payment Method: ${paymentMethod}`, 50, invoiceTableTop + 140);
+      // Display appropriate transaction ID based on payment method
+      let transactionIdLabel = 'Transaction ID:';
+      let transactionIdValue = transactionData.id;
+      
+      if (transactionData.paymentProcessor === 'mpesa') {
+        transactionIdLabel = 'M-Pesa Receipt:';
+        transactionIdValue = transactionData.mpesaReceiptNumber || transactionData.id;
+      } else if (transactionData.paymentProcessor === 'stripe') {
+        transactionIdLabel = 'Payment ID:';
+        transactionIdValue = transactionData.stripePaymentId || transactionData.id;
+      } else if (transactionData.paymentProcessor === 'paystack') {
+        transactionIdLabel = 'Reference:';
+        transactionIdValue = transactionData.paystackReference || transactionData.id;
+      }
+      
+      doc.text(`${transactionIdLabel} ${transactionIdValue}`, 50, invoiceTableTop + 160);
       doc.text(`Payment Status: ${transactionData.status === 'success' ? 'Paid' : 'Pending'}`, 50, invoiceTableTop + 180);
       
       // Add footer
@@ -167,7 +200,7 @@ const storeInvoiceReference = async (transactionData, invoiceUrl, storagePath) =
     const invoiceData = {
       transactionId: transactionData.id,
       merchantId: transactionData.ownerUid,
-      customerId: transactionData.payerPhone || 'unknown',
+      customerId: transactionData.payerPhone || transactionData.payerEmail || 'unknown',
       customerName: transactionData.payerName || 'Customer',
       customerEmail: transactionData.payerEmail || '',
       amount: transactionData.amount || 0,
@@ -176,7 +209,10 @@ const storeInvoiceReference = async (transactionData, invoiceUrl, storagePath) =
       status: transactionData.status || 'pending',
       invoiceUrl: invoiceUrl,
       storagePath: storagePath,
+      paymentProcessor: transactionData.paymentProcessor || 'unknown',
       mpesaReceiptNumber: transactionData.mpesaReceiptNumber || '',
+      stripePaymentId: transactionData.stripePaymentId || '',
+      paystackReference: transactionData.paystackReference || '',
       createdAt: serverTimestamp(),
     };
     
@@ -205,22 +241,24 @@ const storeInvoiceReference = async (transactionData, invoiceUrl, storagePath) =
  */
 const storeCustomerInformation = async (transactionData) => {
   try {
-    if (!transactionData.payerPhone) {
-      console.log('No customer phone number provided, skipping customer storage');
+    // Check for either phone or email to identify the customer
+    if (!transactionData.payerPhone && !transactionData.payerEmail) {
+      console.log('No customer phone number or email provided, skipping customer storage');
       return;
     }
     
-    const customerId = transactionData.payerPhone;
+    // Use phone number as primary ID, fallback to email if phone not available
+    const customerId = transactionData.payerPhone || transactionData.payerEmail;
     const merchantId = transactionData.ownerUid;
     
     // Check if customer exists
     const customerRef = doc(db, 'merchants', merchantId, 'customers', customerId);
     const customerDoc = await getDoc(customerRef);
     
+    console.log(`Checking for customer with ID: ${customerId} for merchant: ${merchantId}`);
+    
     const customerData = {
-      phoneNumber: customerId,
       name: transactionData.payerName || 'Customer',
-      email: transactionData.payerEmail || '',
       lastTransactionDate: serverTimestamp(),
       lastTransactionAmount: transactionData.amount || 0,
       totalTransactions: customerDoc.exists() 
@@ -231,6 +269,36 @@ const storeCustomerInformation = async (transactionData) => {
         : (transactionData.amount || 0),
       updatedAt: serverTimestamp(),
     };
+    
+    // Add phone number if available
+    if (transactionData.payerPhone) {
+      customerData.phoneNumber = transactionData.payerPhone;
+    }
+    
+    // Add email if available
+    if (transactionData.payerEmail) {
+      customerData.email = transactionData.payerEmail;
+    }
+    
+    // Add payment method information
+    if (transactionData.paymentProcessor) {
+      // Initialize payment method stats if they don't exist
+      const paymentStats = customerDoc.exists() ? (customerDoc.data().paymentMethods || {}) : {};
+      
+      // Get the payment processor
+      const processor = transactionData.paymentProcessor;
+      
+      // Update the stats for this payment method
+      paymentStats[processor] = {
+        count: (paymentStats[processor]?.count || 0) + 1,
+        totalSpent: (paymentStats[processor]?.totalSpent || 0) + (transactionData.amount || 0),
+        lastUsed: serverTimestamp()
+      };
+      
+      customerData.paymentMethods = paymentStats;
+      customerData.preferredPaymentMethod = Object.keys(paymentStats).reduce((a, b) => 
+        paymentStats[a]?.count > paymentStats[b]?.count ? a : b, processor);
+    }
     
     if (!customerDoc.exists()) {
       customerData.createdAt = serverTimestamp();
@@ -245,13 +313,19 @@ const storeCustomerInformation = async (transactionData) => {
       description: transactionData.description || 'Payment',
       status: transactionData.status || 'pending',
       createdAt: serverTimestamp(),
+      paymentProcessor: transactionData.paymentProcessor || 'unknown',
       mpesaReceiptNumber: transactionData.mpesaReceiptNumber || '',
+      stripePaymentId: transactionData.stripePaymentId || '',
+      paystackReference: transactionData.paystackReference || '',
     });
     
-    // Update or create customer document
-    await setDoc(customerRef, customerData, { merge: true });
-    
-    console.log(`Customer information stored/updated for ${customerId}`);
+    try {
+      // Update or create customer document
+      await setDoc(customerRef, customerData, { merge: true });
+      console.log(`Customer information stored/updated for ${customerId}`);
+    } catch (error) {
+      console.error(`Error storing customer information for ${customerId}:`, error);
+    }
   } catch (error) {
     console.error('Error storing customer information:', error);
     // Don't throw error to prevent invoice generation failure
