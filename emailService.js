@@ -150,8 +150,45 @@ const sendOrderCancellationEmail = async (orderDetails) => {
   }
 };
 
+const sendPaymentConfirmationEmail = async (paymentData) => {
+  try {
+    console.log('Preparing to send payment confirmation email:', paymentData.transactionId);
+    
+    if (!paymentData?.email) {
+      throw new Error('Missing recipient email address');
+    }
+
+    const mailOptions = {
+      from: `"PayNow" <${process.env.EMAIL_USER}>`,
+      to: paymentData.email,
+      subject: 'Payment Confirmation - PayNow',
+      template: 'paymentConfirmation',
+      context: {
+        transactionId: paymentData.transactionId,
+        customerName: paymentData.customerName || 'Valued Customer',
+        amount: paymentData.amount,
+        currency: paymentData.currency || 'KES',
+        paymentMethod: paymentData.paymentMethod,
+        description: paymentData.description || 'Payment',
+        receiptNumber: paymentData.receiptNumber || '',
+        date: new Date().toLocaleDateString()
+      }
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log('Payment confirmation email sent successfully:', info.messageId);
+    return info;
+  } catch (error) {
+    console.error('Error sending payment confirmation email:', error);
+    console.error('Payment details:', JSON.stringify(paymentData, null, 2));
+    // Don't throw error to prevent transaction processing failure
+    return null;
+  }
+};
+
 module.exports = {
   sendOrderConfirmationEmail,
   sendOrderStatusUpdateEmail,
-  sendOrderCancellationEmail
+  sendOrderCancellationEmail,
+  sendPaymentConfirmationEmail
 }; 

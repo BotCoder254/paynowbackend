@@ -12,11 +12,7 @@ try {
   adminApp = admin.app();
 } catch (e) {
   adminApp = admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId: process.env.FIREBASE_PROJECT_ID || "twitterclone-47ebf",
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n')
-    }),
+    credential: admin.credential.cert(require('./twitterclone-47ebf-firebase-adminsdk-fbsvc-0a7000048b.json')),
     storageBucket: process.env.FIREBASE_STORAGE_BUCKET || "twitterclone-47ebf.appspot.com"
   });
 }

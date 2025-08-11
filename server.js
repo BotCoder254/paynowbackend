@@ -4,15 +4,20 @@ const axios = require("axios");
 const moment = require("moment");
 const cors = require("cors");
 const https = require('https');
+const crypto = require('crypto');
+const stripe = require('stripe');
 const { doc, updateDoc, serverTimestamp, getDoc } = require("firebase/firestore");
 const { db } = require("./firebase");
 const { 
   sendOrderConfirmationEmail, 
   sendOrderStatusUpdateEmail, 
-  sendOrderCancellationEmail 
+  sendOrderCancellationEmail,
+  sendPaymentConfirmationEmail
 } = require('./emailService');
 const { processTransactionInvoice, storeCustomerInformation } = require('./invoiceService');
 const { checkUnpaidLinks, sendManualReminder } = require('./reminderService');
+const { createPaymentIntent, handleWebhookEvent: handleStripeWebhook, getStripeInstance } = require('./stripeService');
+const { initializeTransaction, verifyTransaction, handleWebhookEvent: handlePaystackWebhook, getPaystackSecretKey } = require('./paystackService');
 
 // Add environment variables for email configuration
 require('dotenv').config();
@@ -543,6 +548,25 @@ app.post("/callback/:orderId", async (req, res) => {
         } catch (smsError) {
           console.error('Failed to send SMS notification:', smsError);
         }
+        
+        // Send email confirmation if email is available
+        if (transactionData.payerEmail) {
+          try {
+            await sendPaymentConfirmationEmail({
+              transactionId: orderId,
+              email: transactionData.payerEmail,
+              customerName: `${firstName} ${middleName} ${lastName}`.trim(),
+              amount: transactionData.amount,
+              currency: transactionData.currency || 'KES',
+              paymentMethod: 'M-Pesa',
+              description: transactionData.description,
+              receiptNumber: mpesaReceiptNumber
+            });
+            console.log('Email confirmation sent successfully to:', transactionData.payerEmail);
+          } catch (emailError) {
+            console.error('Failed to send email confirmation:', emailError);
+          }
+        }
       }
     }
 
@@ -916,6 +940,200 @@ app.post("/send-reminder", async (req, res) => {
   }
 });
 
+// Stripe payment endpoint
+app.post("/stripe/create-payment-intent", async (req, res) => {
+  try {
+    const { amount, currency, description, metadata, transactionId, merchantId } = req.body;
+    
+    if (!amount || !transactionId) {
+      return res.status(400).json({
+        ResponseCode: "1",
+        errorMessage: "Amount and transaction ID are required"
+      });
+    }
+    
+    if (!merchantId) {
+      return res.status(400).json({
+        ResponseCode: "1",
+        errorMessage: "Merchant ID is required"
+      });
+    }
+    
+    const paymentIntent = await createPaymentIntent({
+      amount,
+      currency,
+      description,
+      metadata,
+      transactionId,
+      merchantId
+    });
+    
+    res.json({
+      ResponseCode: "0",
+      clientSecret: paymentIntent.clientSecret,
+      paymentIntentId: paymentIntent.paymentIntentId
+    });
+  } catch (error) {
+    console.error('Error creating Stripe payment intent:', error);
+    res.status(500).json({
+      ResponseCode: "1",
+      errorMessage: error.message || "Failed to create payment intent"
+    });
+  }
+});
+
+// Stripe webhook endpoint
+app.post("/stripe/webhook", express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const sig = req.headers['stripe-signature'];
+    let event;
+    
+    try {
+      // For webhook verification, we use a different key than for API calls
+      const stripeModule = require('stripe');
+      // Use a hardcoded key for testing - in production, use environment variable
+      const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || 'whsec_your_stripe_webhook_secret_here';
+      const stripeClient = stripeModule(process.env.STRIPE_SECRET_KEY || 'sk_test_51O2KBJFYIgdXRfgqGLqVGQJHRxBEJLcRgGZyUBbKGnMmzYAGxRHDQpLDDpbXwHKe3XRxvVMKWoAOUkrSzxCVTxGq00Jf9Qy1Jb');
+      
+      event = stripeClient.webhooks.constructEvent(
+        req.body,
+        sig,
+        webhookSecret
+      );
+    } catch (err) {
+      console.error('Stripe webhook signature verification failed:', err);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+    
+    // Handle the event
+    await handleStripeWebhook(event);
+    
+    // Return a 200 response to acknowledge receipt of the event
+    res.json({ received: true });
+  } catch (error) {
+    console.error('Error handling Stripe webhook:', error);
+    res.status(500).json({
+      error: error.message || "Failed to process webhook"
+    });
+  }
+});
+
+// Paystack initialization endpoint
+app.post("/paystack/initialize", async (req, res) => {
+  try {
+    const { amount, email, reference, callbackUrl, metadata, merchantId } = req.body;
+    
+    if (!amount || !email || !reference) {
+      return res.status(400).json({
+        ResponseCode: "1",
+        errorMessage: "Amount, email, and reference are required"
+      });
+    }
+    
+    if (!merchantId) {
+      return res.status(400).json({
+        ResponseCode: "1",
+        errorMessage: "Merchant ID is required"
+      });
+    }
+    
+    const transaction = await initializeTransaction({
+      amount,
+      email,
+      reference,
+      callbackUrl,
+      metadata,
+      merchantId
+    });
+    
+    res.json({
+      ResponseCode: "0",
+      authorization_url: transaction.authorization_url,
+      access_code: transaction.access_code,
+      reference: transaction.reference
+    });
+  } catch (error) {
+    console.error('Error initializing Paystack transaction:', error);
+    res.status(500).json({
+      ResponseCode: "1",
+      errorMessage: error.message || "Failed to initialize transaction"
+    });
+  }
+});
+
+// Paystack verification endpoint
+app.get("/paystack/verify/:reference", async (req, res) => {
+  try {
+    const { reference } = req.params;
+    const { merchantId } = req.query;
+    
+    if (!reference) {
+      return res.status(400).json({
+        ResponseCode: "1",
+        errorMessage: "Reference is required"
+      });
+    }
+    
+    if (!merchantId) {
+      return res.status(400).json({
+        ResponseCode: "1",
+        errorMessage: "Merchant ID is required"
+      });
+    }
+    
+    const transaction = await verifyTransaction(reference, merchantId);
+    
+    if (transaction.status === 'success') {
+      res.json({
+        ResponseCode: "0",
+        status: transaction.status,
+        reference: transaction.reference,
+        amount: transaction.amount / 100, // Convert back from kobo to naira
+        transaction
+      });
+    } else {
+      res.json({
+        ResponseCode: "2",
+        status: transaction.status,
+        reference: transaction.reference,
+        message: transaction.gateway_response || "Payment not successful",
+        transaction
+      });
+    }
+  } catch (error) {
+    console.error('Error verifying Paystack transaction:', error);
+    res.status(500).json({
+      ResponseCode: "1",
+      errorMessage: error.message || "Failed to verify transaction"
+    });
+  }
+});
+
+// Paystack webhook endpoint
+app.post("/paystack/webhook", async (req, res) => {
+  try {
+    // Validate that the request is from Paystack
+    const hash = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
+                       .update(JSON.stringify(req.body))
+                       .digest('hex');
+                       
+    if (hash !== req.headers['x-paystack-signature']) {
+      return res.status(400).json({ error: 'Invalid signature' });
+    }
+    
+    // Handle the event
+    await handlePaystackWebhook(req.body);
+    
+    // Return a 200 response to acknowledge receipt of the event
+    res.sendStatus(200);
+  } catch (error) {
+    console.error('Error handling Paystack webhook:', error);
+    res.status(500).json({
+      error: error.message || "Failed to process webhook"
+    });
+  }
+});
+
 // Schedule automatic reminder checks (every hour)
 setInterval(async () => {
   try {
@@ -926,6 +1144,70 @@ setInterval(async () => {
   }
 }, 60 * 60 * 1000); // 1 hour
 
+// API key testing endpoints
+app.post("/test-stripe-key", async (req, res) => {
+  try {
+    const { secretKey } = req.body;
+    
+    if (!secretKey || !secretKey.startsWith('sk_')) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid Stripe secret key format"
+      });
+    }
+    
+    // Try to create a Stripe instance with the provided key
+    const stripeInstance = stripe(secretKey);
+    
+    // Try to fetch something simple to validate the key
+    await stripeInstance.balance.retrieve();
+    
+    // If we got here, the key is valid
+    res.json({
+      success: true,
+      message: "Stripe API key is valid"
+    });
+  } catch (error) {
+    console.error('Error testing Stripe key:', error);
+    res.status(400).json({
+      success: false,
+      error: error.message || "Invalid Stripe API key"
+    });
+  }
+});
+
+app.post("/test-paystack-key", async (req, res) => {
+  try {
+    const { secretKey } = req.body;
+    
+    if (!secretKey || !secretKey.startsWith('sk_')) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid Paystack secret key format"
+      });
+    }
+    
+    // Try to make a simple API call to Paystack
+    const response = await axios.get('https://api.paystack.co/transaction', {
+      headers: {
+        'Authorization': `Bearer ${secretKey}`
+      }
+    });
+    
+    // If we got here, the key is valid
+    res.json({
+      success: true,
+      message: "Paystack API key is valid"
+    });
+  } catch (error) {
+    console.error('Error testing Paystack key:', error);
+    res.status(400).json({
+      success: false,
+      error: error.response?.data?.message || error.message || "Invalid Paystack API key"
+    });
+  }
+});
+
 app.listen(PORT, () => {
-  console.log(`M-Pesa API Server is running on port ${PORT}`);
+  console.log(`Payment API Server is running on port ${PORT}`);
 });
