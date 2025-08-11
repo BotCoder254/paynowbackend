@@ -5,6 +5,7 @@ const moment = require("moment");
 const cors = require("cors");
 const https = require('https');
 const path = require('path');
+const fs = require('fs');
 const crypto = require('crypto');
 const stripe = require('stripe');
 const { doc, updateDoc, serverTimestamp, getDoc } = require("firebase/firestore");
@@ -1252,6 +1253,12 @@ if (process.env.NODE_ENV === 'production') {
   // Any route that is not an API route will serve the index.html
   app.get('*', (req, res) => {
     if (!req.path.startsWith('/api/')) {
+      // Check if the file exists in public folder
+      const filePath = path.join(__dirname, 'public', req.path);
+      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+        return res.sendFile(filePath);
+      }
+      // Otherwise serve index.html for client-side routing
       res.sendFile(path.resolve(__dirname, 'public', 'index.html'));
     }
   });
