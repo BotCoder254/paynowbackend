@@ -4,6 +4,7 @@ const axios = require("axios");
 const moment = require("moment");
 const cors = require("cors");
 const https = require('https');
+const path = require('path');
 const crypto = require('crypto');
 const stripe = require('stripe');
 const { doc, updateDoc, serverTimestamp, getDoc } = require("firebase/firestore");
@@ -34,7 +35,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS ?
   [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
-    'https://luxecarts-pv1l.onrender.com'
+    'https://paynow-frontend.onrender.com'
   ];
 
 // Configure CORS with proper options
@@ -1238,6 +1239,22 @@ app.post("/test-paystack-key", async (req, res) => {
     });
   }
 });
+
+// Health check endpoint
+app.use('/api/health', require('./api/health'));
+
+// Serve static files if in production
+if (process.env.NODE_ENV === 'production') {
+  // Set static folder
+  app.use(express.static(path.join(__dirname, 'public')));
+
+  // Any route that is not an API route will serve the index.html
+  app.get('*', (req, res) => {
+    if (!req.path.startsWith('/api/')) {
+      res.sendFile(path.resolve(__dirname, 'public', 'index.html'));
+    }
+  });
+}
 
 app.listen(PORT, () => {
   console.log(`Payment API Server is running on port ${PORT}`);
