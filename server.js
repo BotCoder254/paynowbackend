@@ -35,7 +35,8 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS ?
   [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
-    'https://paynow-frontend.onrender.com'
+    'https://paynow-frontend.onrender.com',
+    'https://paynow-chwp.onrender.com'
   ];
 
 // Configure CORS with proper options

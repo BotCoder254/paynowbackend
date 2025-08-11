@@ -320,9 +320,9 @@ const storeCustomerInformation = async (transactionData) => {
     });
     
     try {
-      // Update or create customer document
-      await setDoc(customerRef, customerData, { merge: true });
-      console.log(`Customer information stored/updated for ${customerId}`);
+    // Update or create customer document
+    await setDoc(customerRef, customerData, { merge: true });
+    console.log(`Customer information stored/updated for ${customerId}`);
     } catch (error) {
       console.error(`Error storing customer information for ${customerId}:`, error);
     }
