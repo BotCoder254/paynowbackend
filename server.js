@@ -21,6 +21,7 @@ const { checkUnpaidLinks, sendManualReminder } = require('./reminderService');
 const { createOrder, capturePayment, handleWebhookEvent: handlePayPalWebhook, verifyWebhookSignature, testCredentials } = require('./paypalService');
 const { initializeTransaction, verifyTransaction, handleWebhookEvent: handlePaystackWebhook, getPaystackSecretKey } = require('./paystackService');
 const { sendPaymentLinkSMS, sendPaymentLinkEmailNotification, addCustomer } = require('./customerService');
+const { sendSMS } = require('./smsService');
 
 // Add environment variables for email configuration
 require('dotenv').config();
@@ -98,14 +99,45 @@ app.use((err, req, res, next) => {
 });
 
 // ACCESS TOKEN FUNCTION
-async function getAccessToken() {
-  const consumer_key = "frmypHgIJYc7mQuUu5NBvnYc0kF1StP3"; 
-  const consumer_secret = "UAeJAJLNUkV5MLpL"; 
-  const url = "https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials";
-
-  const auth = "Basic " + Buffer.from(consumer_key + ":" + consumer_secret).toString("base64");
-
+async function getAccessToken(merchantId) {
   try {
+    if (!merchantId) {
+      throw new Error('Merchant ID is required for M-Pesa access token');
+    }
+    
+    console.log('Fetching merchant-specific M-Pesa settings for:', merchantId);
+    // Get merchant settings from Firestore
+    const merchantSettingsRef = doc(db, 'merchantSettings', merchantId);
+    const merchantSettingsDoc = await getDoc(merchantSettingsRef);
+    
+    if (!merchantSettingsDoc.exists() || !merchantSettingsDoc.data().mpesa) {
+      throw new Error('M-Pesa settings not found for this merchant');
+    }
+    
+    const mpesaSettings = merchantSettingsDoc.data().mpesa;
+    
+    // Only use merchant settings if they are enabled and have required fields
+    if (!mpesaSettings.enabled) {
+      throw new Error('M-Pesa payments are not enabled for this merchant');
+    }
+    
+    if (!mpesaSettings.consumerKey || !mpesaSettings.consumerSecret) {
+      throw new Error('Incomplete M-Pesa API credentials for this merchant');
+    }
+    
+    console.log('Using merchant-specific M-Pesa settings');
+    const consumer_key = mpesaSettings.consumerKey;
+    const consumer_secret = mpesaSettings.consumerSecret;
+    
+    // Set the correct URL based on environment
+    let baseUrl = "https://api.safaricom.co.ke"; // Production URL
+    if (mpesaSettings.environment === 'sandbox') {
+      baseUrl = "https://sandbox.safaricom.co.ke";
+    }
+    
+    const url = `${baseUrl}/oauth/v1/generate?grant_type=client_credentials`;
+    const auth = "Basic " + Buffer.from(consumer_key + ":" + consumer_secret).toString("base64");
+
     console.log('Requesting access token...');
     const response = await axios.get(url, {
       headers: {
@@ -136,7 +168,8 @@ app.get("/", (req, res) => {
 
 app.get("/access_token", async (req, res) => {
   try {
-    const accessToken = await getAccessToken();
+    const { merchantId } = req.query;
+    const accessToken = await getAccessToken(merchantId);
     sendJsonResponse(res, 200, { 
       ResponseCode: "0",
       accessToken 
@@ -254,6 +287,7 @@ app.post("/stkpush", async (req, res) => {
     let phoneNumber = req.body.phone;
     const amount = req.body.amount;
     const orderId = req.body.orderId;
+    const merchantId = req.body.merchantId; // Get merchantId from request
 
     // Format the phone number
     phoneNumber = phoneNumber.toString().trim();
@@ -282,24 +316,71 @@ app.post("/stkpush", async (req, res) => {
       });
     }
 
-    const accessToken = await getAccessToken();
-    const url = "https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest";
+    // Get merchant-specific M-Pesa settings if available
+    if (!merchantId) {
+      return sendJsonResponse(res, 400, {
+        ResponseCode: "1",
+        errorMessage: "Merchant ID is required for M-Pesa payments"
+      });
+    }
+    
+    console.log('Fetching merchant-specific M-Pesa settings for STK push:', merchantId);
+    // Get merchant settings from Firestore
+    const merchantSettingsRef = doc(db, 'merchantSettings', merchantId);
+    const merchantSettingsDoc = await getDoc(merchantSettingsRef);
+    
+    if (!merchantSettingsDoc.exists() || !merchantSettingsDoc.data().mpesa) {
+      return sendJsonResponse(res, 400, {
+        ResponseCode: "1",
+        errorMessage: "M-Pesa settings not found for this merchant"
+      });
+    }
+    
+    const mpesaSettings = merchantSettingsDoc.data().mpesa;
+    
+    // Only use merchant settings if they are enabled and have required fields
+    if (!mpesaSettings.enabled) {
+      return sendJsonResponse(res, 400, {
+        ResponseCode: "1",
+        errorMessage: "M-Pesa payments are not enabled for this merchant"
+      });
+    }
+    
+    if (!mpesaSettings.shortCode || !mpesaSettings.passkey) {
+      return sendJsonResponse(res, 400, {
+        ResponseCode: "1",
+        errorMessage: "Incomplete M-Pesa configuration for this merchant"
+      });
+    }
+    
+    console.log('Using merchant-specific M-Pesa settings for STK push');
+    const shortCode = mpesaSettings.shortCode;
+    const passkey = mpesaSettings.passkey;
+    
+    // Set the correct URL based on environment
+    let baseUrl = "https://api.safaricom.co.ke"; // Production URL
+    if (mpesaSettings.environment === 'sandbox') {
+      baseUrl = "https://sandbox.safaricom.co.ke";
+    }
+
+    const accessToken = await getAccessToken(merchantId);
+    const url = `${baseUrl}/mpesa/stkpush/v1/processrequest`;
     const auth = "Bearer " + accessToken;
     const timestampx = moment().format("YYYYMMDDHHmmss");
     const password = Buffer.from(
-      "4121151" +
-        "68cb945afece7b529b4a0901b2d8b1bb3bd9daa19bfdb48c69bec8dde962a932" +
-        timestampx
+      shortCode +
+      passkey +
+      timestampx
     ).toString("base64");
 
     const requestBody = {
-      BusinessShortCode: "4121151",
+      BusinessShortCode: shortCode,
       Password: password,
       Timestamp: timestampx,
       TransactionType: "CustomerPayBillOnline",
       Amount: amount,
       PartyA: phoneNumber,
-      PartyB: "4121151",
+      PartyB: shortCode,
       PhoneNumber: phoneNumber,
       CallBackURL: `${process.env.BASE_URL}/callback/${orderId}`,
       AccountReference: "PAYNOW",
@@ -339,9 +420,37 @@ app.post("/stkpush", async (req, res) => {
       });
     } catch (mpesaError) {
       console.error('M-Pesa API error:', mpesaError.response?.data || mpesaError);
+      
+      // Extract specific error details from M-Pesa API response
+      const errorCode = mpesaError.response?.data?.errorCode;
+      const errorMessage = mpesaError.response?.data?.errorMessage || 'M-Pesa API request failed';
+      
+      // Handle specific M-Pesa API error codes
+      if (errorCode === '500.001.1001') {
+        return sendJsonResponse(res, 400, {
+          ResponseCode: "1",
+          errorCode: errorCode,
+          errorMessage: "Merchant does not exist in M-Pesa. Please verify your M-Pesa shortcode and credentials."
+        });
+      } else if (errorCode === '400.002.02') {
+        return sendJsonResponse(res, 400, {
+          ResponseCode: "1",
+          errorCode: errorCode,
+          errorMessage: "Invalid access token. Please check your M-Pesa API credentials."
+        });
+      } else if (errorCode === '404.001.03') {
+        return sendJsonResponse(res, 400, {
+          ResponseCode: "1",
+          errorCode: errorCode,
+          errorMessage: "Transaction does not exist. Please try again with a new transaction."
+        });
+      }
+      
+      // Generic error response for other cases
       return sendJsonResponse(res, 502, {
         ResponseCode: "1",
-        errorMessage: mpesaError.response?.data?.errorMessage || 'M-Pesa API request failed'
+        errorCode: errorCode || 'unknown',
+        errorMessage: errorMessage
       });
     }
   } catch (error) {
@@ -361,64 +470,7 @@ app.post("/stkpush", async (req, res) => {
   }
 });
 
-// Function to send SMS notifications
-const sendSMSNotification = async (phoneNumber, message) => {
-  try {
-    // Format phone number to ensure it starts with 254
-    let formattedPhone = phoneNumber.toString().trim();
-    formattedPhone = formattedPhone.replace(/^\+|^0+|\s+/g, "");
-    if (!formattedPhone.startsWith("254")) {
-      formattedPhone = "254" + formattedPhone;
-    }
-
-    const data = JSON.stringify({
-      apiKey: 'f9e412887a42ff4938baa34971e0b096',
-      shortCode: 'VasPro',
-      message: message,
-      recipient: formattedPhone,
-      callbackURL: '',
-      enqueue: 1,
-      isScheduled: false,
-    });
-
-    const options = {
-      hostname: 'api.vaspro.co.ke',
-      port: 443,
-      path: '/v3/BulkSMS/api/create',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': data.length,
-      },
-    };
-
-    return new Promise((resolve, reject) => {
-      const smsReq = https.request(options, (smsRes) => {
-        let responseData = '';
-
-        smsRes.on('data', (chunk) => {
-          responseData += chunk;
-        });
-
-        smsRes.on('end', () => {
-          console.log('SMS sent successfully:', responseData);
-          resolve(responseData);
-        });
-      });
-
-      smsReq.on('error', (error) => {
-        console.error('Error sending SMS:', error);
-        reject(error);
-      });
-
-      smsReq.write(data);
-      smsReq.end();
-    });
-  } catch (error) {
-    console.error('SMS sending error:', error);
-    throw error;
-  }
-};
+// SMS notifications are now handled by the smsService module
 
 // Update the callback endpoint to include SMS notification and store validation data
 app.post("/callback/:orderId", async (req, res) => {
@@ -547,7 +599,7 @@ app.post("/callback/:orderId", async (req, res) => {
         
         const message = `Thank you for your payment of KES ${transactionData.amount} for ${transactionData.description}! Your transaction was successful. Receipt: ${mpesaReceiptNumber}. Transaction ID: ${orderId.substring(0, 8)}.${invoiceMessage} Thank you for using PayNow.`;
         try {
-          await sendSMSNotification(transactionData.payerPhone, message);
+          await sendSMS(transactionData.payerPhone, message);
           console.log('SMS notification sent successfully to:', transactionData.payerPhone);
         } catch (smsError) {
           console.error('Failed to send SMS notification:', smsError);
@@ -595,6 +647,7 @@ app.post("/query", async (req, res) => {
   try {
     console.log("Received query request:", req.body);
     const queryCode = req.body.queryCode;
+    const merchantId = req.body.merchantId; // Get merchantId from request
 
     if (!queryCode) {
       console.error('Missing queryCode parameter');
@@ -606,18 +659,73 @@ app.post("/query", async (req, res) => {
       });
     }
 
-    const accessToken = await getAccessToken();
-    const url = "https://api.safaricom.co.ke/mpesa/stkpushquery/v1/query";
+    // Get merchant-specific M-Pesa settings if available
+    if (!merchantId) {
+      return sendJsonResponse(res, 400, {
+        ResponseCode: "1",
+        ResultCode: "1",
+        ResultDesc: "Merchant ID is required for M-Pesa payments",
+        errorMessage: "Merchant ID is required for M-Pesa payments"
+      });
+    }
+    
+    console.log('Fetching merchant-specific M-Pesa settings for query:', merchantId);
+    // Get merchant settings from Firestore
+    const merchantSettingsRef = doc(db, 'merchantSettings', merchantId);
+    const merchantSettingsDoc = await getDoc(merchantSettingsRef);
+    
+    if (!merchantSettingsDoc.exists() || !merchantSettingsDoc.data().mpesa) {
+      return sendJsonResponse(res, 400, {
+        ResponseCode: "1",
+        ResultCode: "1",
+        ResultDesc: "M-Pesa settings not found for this merchant",
+        errorMessage: "M-Pesa settings not found for this merchant"
+      });
+    }
+    
+    const mpesaSettings = merchantSettingsDoc.data().mpesa;
+    
+    // Only use merchant settings if they are enabled and have required fields
+    if (!mpesaSettings.enabled) {
+      return sendJsonResponse(res, 400, {
+        ResponseCode: "1",
+        ResultCode: "1",
+        ResultDesc: "M-Pesa payments are not enabled for this merchant",
+        errorMessage: "M-Pesa payments are not enabled for this merchant"
+      });
+    }
+    
+    if (!mpesaSettings.shortCode || !mpesaSettings.passkey) {
+      return sendJsonResponse(res, 400, {
+        ResponseCode: "1",
+        ResultCode: "1",
+        ResultDesc: "Incomplete M-Pesa configuration for this merchant",
+        errorMessage: "Incomplete M-Pesa configuration for this merchant"
+      });
+    }
+    
+    console.log('Using merchant-specific M-Pesa settings for query');
+    const shortCode = mpesaSettings.shortCode;
+    const passkey = mpesaSettings.passkey;
+    
+    // Set the correct URL based on environment
+    let baseUrl = "https://api.safaricom.co.ke"; // Production URL
+    if (mpesaSettings.environment === 'sandbox') {
+      baseUrl = "https://sandbox.safaricom.co.ke";
+    }
+
+    const accessToken = await getAccessToken(merchantId);
+    const url = `${baseUrl}/mpesa/stkpushquery/v1/query`;
     const auth = "Bearer " + accessToken;
     const timestampx = moment().format("YYYYMMDDHHmmss");
     const password = Buffer.from(
-      "4121151" +
-        "68cb945afece7b529b4a0901b2d8b1bb3bd9daa19bfdb48c69bec8dde962a932" +
-        timestampx
+      shortCode +
+      passkey +
+      timestampx
     ).toString("base64");
 
     const requestBody = {
-      BusinessShortCode: "4121151", //change this to the correct Till number 
+      BusinessShortCode: shortCode, 
       Password: password,
       Timestamp: timestampx,
       CheckoutRequestID: queryCode,
@@ -681,29 +789,41 @@ app.post("/query", async (req, res) => {
     } catch (mpesaError) {
       console.error('M-Pesa API error response:', mpesaError.response?.data);
       
-      // Check for specific error codes
+      // Extract specific error details from M-Pesa API response
       const errorCode = mpesaError.response?.data?.errorCode;
       const errorMessage = mpesaError.response?.data?.errorMessage;
 
-      // Check if it's a processing status error
+      // Handle specific M-Pesa API error codes
       if (errorCode === '500.001.1001') {
-        return sendJsonResponse(res, 200, {
-          ResponseCode: "2", // Custom code for processing
-          ResultCode: "2",
-          ResultDesc: "The transaction is being processed",
-          errorMessage: errorMessage,
-          isProcessing: true
+        return sendJsonResponse(res, 400, {
+          ResponseCode: "1",
+          ResultCode: "1",
+          ResultDesc: "Merchant does not exist in M-Pesa. Please verify your M-Pesa shortcode and credentials.",
+          errorCode: errorCode,
+          errorMessage: "Merchant does not exist in M-Pesa. Please verify your M-Pesa shortcode and credentials."
         });
       }
 
-      // Check if it's a cancellation error
-      if (errorCode === '500.001.1032') {
+      // Check if it's a transaction not found error
+      if (errorCode === '500.001.1032' || errorCode === '404.001.03') {
         return sendJsonResponse(res, 200, {
           ResponseCode: "3", // Custom code for cancellation
           ResultCode: "1032",
-          ResultDesc: "Transaction canceled by user",
-          errorMessage: errorMessage,
+          ResultDesc: "Transaction canceled or not found",
+          errorCode: errorCode,
+          errorMessage: errorMessage || "Transaction was canceled or not found",
           isCanceled: true
+        });
+      }
+
+      // Check if it's an invalid access token error
+      if (errorCode === '400.002.02') {
+        return sendJsonResponse(res, 400, {
+          ResponseCode: "1",
+          ResultCode: "1",
+          ResultDesc: "Invalid access token. Please check your M-Pesa API credentials.",
+          errorCode: errorCode,
+          errorMessage: "Invalid access token. Please check your M-Pesa API credentials."
         });
       }
 
@@ -712,6 +832,7 @@ app.post("/query", async (req, res) => {
         ResponseCode: "1",
         ResultCode: "1",
         ResultDesc: errorMessage || "Failed to check payment status",
+        errorCode: errorCode || 'unknown',
         errorMessage: errorMessage || "Payment query failed"
       });
     }
@@ -792,7 +913,7 @@ app.post("/update-order-status", async (req, res) => {
           message = `Your PayNow order #${orderId.slice(-6)} status has been updated to: ${newStatus}`;
       }
       
-      await sendSMSNotification(orderData.shippingDetails.phone, message);
+      await sendSMS(orderData.shippingDetails.phone, message);
       console.log('Status update SMS sent successfully for order:', orderId);
 
       // Update notification tracking
@@ -872,7 +993,7 @@ app.post("/cancel-order", async (req, res) => {
 
     // Send SMS notification
     const message = `Your PayNow order #${orderId.slice(-6)} has been cancelled. Any payment made will be refunded within 5-7 business days.`;
-    await sendSMSNotification(orderData.shippingDetails.phone, message);
+    await sendSMS(orderData.shippingDetails.phone, message);
 
     res.json({
       ResponseCode: "0",
@@ -1281,6 +1402,65 @@ app.post("/test-paystack-key", async (req, res) => {
     res.status(400).json({
       success: false,
       error: error.response?.data?.message || error.message || "Invalid Paystack API key"
+    });
+  }
+});
+
+// Endpoint to test M-Pesa credentials
+app.post("/test-mpesa-credentials", async (req, res) => {
+  try {
+    const { consumerKey, consumerSecret, shortCode } = req.body;
+    
+    if (!consumerKey || !consumerSecret || !shortCode) {
+      return res.status(400).json({
+        success: false,
+        error: "Consumer Key, Consumer Secret, and Short Code are required"
+      });
+    }
+    
+    // Try to get an access token using the provided credentials
+    let baseUrl = "https://api.safaricom.co.ke"; // Default to production
+    
+    // If it looks like a sandbox key, use sandbox URL
+    if (consumerKey.toLowerCase().includes('test') || consumerKey.toLowerCase().includes('sandbox')) {
+      baseUrl = "https://sandbox.safaricom.co.ke";
+    }
+    
+    const url = `${baseUrl}/oauth/v1/generate?grant_type=client_credentials`;
+    const auth = "Basic " + Buffer.from(consumerKey + ":" + consumerSecret).toString("base64");
+    
+    const response = await axios.get(url, {
+      headers: {
+        Authorization: auth,
+      },
+    });
+    
+    // If we get here, the credentials are valid
+    res.json({
+      success: true,
+      message: "M-Pesa credentials are valid",
+      accessToken: response.data.access_token,
+      environment: baseUrl.includes('sandbox') ? 'sandbox' : 'production'
+    });
+  } catch (error) {
+    console.error('Error testing M-Pesa credentials:', error);
+    
+    // Extract specific error details from M-Pesa API response
+    const errorCode = error.response?.data?.errorCode;
+    const errorMessage = error.response?.data?.errorMessage;
+    
+    if (errorCode === '400.002.01' || errorCode === '400.002.02') {
+      return res.status(400).json({
+        success: false,
+        errorCode: errorCode,
+        error: "Invalid consumer key or consumer secret. Please check your M-Pesa API credentials."
+      });
+    }
+    
+    res.status(400).json({
+      success: false,
+      errorCode: errorCode || 'unknown',
+      error: errorMessage || error.message || "Invalid M-Pesa credentials"
     });
   }
 });
