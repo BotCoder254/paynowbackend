@@ -16,8 +16,8 @@ const transporter = nodemailer.createTransport({
   port: 465,
   secure: true, // use SSL
   auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
+    user: process.env.EMAIL_USER || 'telvivaztelvin@gmail.com',
+    pass: process.env.EMAIL_PASS || 'lkqv vgqn dfqc qcgr'
   },
   debug: true // Enable debug logs
 });
@@ -186,9 +186,46 @@ const sendPaymentConfirmationEmail = async (paymentData) => {
   }
 };
 
+const sendPaymentLinkEmail = async (to, name, paymentUrl, description, amount, currency) => {
+  try {
+    console.log('Preparing to send payment link email to:', to);
+    
+    if (!to) {
+      throw new Error('Missing recipient email address');
+    }
+
+    if (!paymentUrl) {
+      throw new Error('Missing payment URL');
+    }
+
+    const mailOptions = {
+      from: `"PayNow" <${process.env.EMAIL_USER}>`,
+      to: to,
+      subject: 'Payment Request - PayNow',
+      template: 'paymentLink',
+      context: {
+        customerName: name || 'Valued Customer',
+        paymentUrl: paymentUrl,
+        description: description || 'Payment Request',
+        amount: amount || '',
+        currency: currency || 'KES',
+        date: new Date().toLocaleDateString()
+      }
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log('Payment link email sent successfully:', info.messageId);
+    return info;
+  } catch (error) {
+    console.error('Error sending payment link email:', error);
+    throw error;
+  }
+};
+
 module.exports = {
   sendOrderConfirmationEmail,
   sendOrderStatusUpdateEmail,
   sendOrderCancellationEmail,
-  sendPaymentConfirmationEmail
+  sendPaymentConfirmationEmail,
+  sendPaymentLinkEmail
 }; 

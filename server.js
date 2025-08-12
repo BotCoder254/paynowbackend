@@ -20,6 +20,7 @@ const { processTransactionInvoice, storeCustomerInformation } = require('./invoi
 const { checkUnpaidLinks, sendManualReminder } = require('./reminderService');
 const { createOrder, capturePayment, handleWebhookEvent: handlePayPalWebhook, verifyWebhookSignature, testCredentials } = require('./paypalService');
 const { initializeTransaction, verifyTransaction, handleWebhookEvent: handlePaystackWebhook, getPaystackSecretKey } = require('./paystackService');
+const { sendPaymentLinkSMS, sendPaymentLinkEmailNotification, addCustomer } = require('./customerService');
 
 // Add environment variables for email configuration
 require('dotenv').config();
@@ -1305,6 +1306,91 @@ if (process.env.NODE_ENV === 'production') {
     }
   });
 }
+
+// Customer API routes
+app.post('/send-sms', async (req, res) => {
+  try {
+    const { to, name, paymentUrl, description, amount, currency, merchantId } = req.body;
+    
+    if (!to || !paymentUrl || !merchantId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Phone number, payment URL, and merchant ID are required' 
+      });
+    }
+    
+    const result = await sendPaymentLinkSMS({
+      to,
+      name,
+      paymentUrl,
+      description,
+      amount,
+      currency,
+      merchantId
+    });
+    
+    res.json({ success: true, result });
+  } catch (error) {
+    console.error('Error sending SMS:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/send-payment-link-email', async (req, res) => {
+  try {
+    const { to, name, paymentUrl, description, amount, currency, merchantId } = req.body;
+    
+    if (!to || !paymentUrl || !merchantId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Email, payment URL, and merchant ID are required' 
+      });
+    }
+    
+    const result = await sendPaymentLinkEmailNotification({
+      to,
+      name,
+      paymentUrl,
+      description,
+      amount,
+      currency,
+      merchantId
+    });
+    
+    res.json({ success: true, result });
+  } catch (error) {
+    console.error('Error sending email:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/customers', async (req, res) => {
+  try {
+    const { merchantId, ...customerData } = req.body;
+    
+    if (!merchantId) {
+      return res.status(400).json({ success: false, error: 'Merchant ID is required' });
+    }
+    
+    if (!customerData.name) {
+      return res.status(400).json({ success: false, error: 'Customer name is required' });
+    }
+    
+    if (!customerData.email && !customerData.phoneNumber) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Either email or phone number is required' 
+      });
+    }
+    
+    const newCustomer = await addCustomer(customerData, merchantId);
+    
+    res.json({ success: true, customer: newCustomer });
+  } catch (error) {
+    console.error('Error adding customer:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`Payment API Server is running on port ${PORT}`);
