@@ -18,7 +18,7 @@ const {
 } = require('./emailService');
 const { processTransactionInvoice, storeCustomerInformation } = require('./invoiceService');
 const { checkUnpaidLinks, sendManualReminder } = require('./reminderService');
-const { createPaymentIntent, handleWebhookEvent: handleStripeWebhook, getStripeInstance } = require('./stripeService');
+const { createOrder, capturePayment, handleWebhookEvent: handlePayPalWebhook, verifyWebhookSignature, testCredentials } = require('./paypalService');
 const { initializeTransaction, verifyTransaction, handleWebhookEvent: handlePaystackWebhook, getPaystackSecretKey } = require('./paystackService');
 
 // Add environment variables for email configuration
@@ -974,15 +974,66 @@ app.post("/send-reminder", async (req, res) => {
   }
 });
 
-// Stripe payment endpoint
-app.post("/stripe/create-payment-intent", async (req, res) => {
+// PayPal payment endpoint
+app.post("/paypal/create-order", async (req, res) => {
   try {
+    console.log('Received PayPal create-order request:', req.body);
     const { amount, currency, description, metadata, transactionId, merchantId } = req.body;
     
     if (!amount || !transactionId) {
+      console.error('Missing required fields for PayPal order:', { amount, transactionId });
       return res.status(400).json({
         ResponseCode: "1",
         errorMessage: "Amount and transaction ID are required"
+      });
+    }
+    
+    if (!merchantId) {
+      console.error('Missing merchantId for PayPal order');
+      return res.status(400).json({
+        ResponseCode: "1",
+        errorMessage: "Merchant ID is required"
+      });
+    }
+    
+    const order = await createOrder({
+      amount,
+      currency,
+      description,
+      metadata,
+      transactionId,
+      merchantId
+    });
+    
+    console.log('PayPal order created successfully:', { 
+      orderId: order.orderId, 
+      status: order.status 
+    });
+    
+    res.json({
+      ResponseCode: "0",
+      orderId: order.orderId,
+      status: order.status,
+      links: order.links
+    });
+  } catch (error) {
+    console.error('Error creating PayPal order:', error);
+    res.status(500).json({
+      ResponseCode: "1",
+      errorMessage: error.message || "Failed to create PayPal order"
+    });
+  }
+});
+
+// PayPal capture payment endpoint
+app.post("/paypal/capture-payment", async (req, res) => {
+  try {
+    const { orderId, merchantId } = req.body;
+    
+    if (!orderId) {
+      return res.status(400).json({
+        ResponseCode: "1",
+        errorMessage: "Order ID is required"
       });
     }
     
@@ -993,59 +1044,44 @@ app.post("/stripe/create-payment-intent", async (req, res) => {
       });
     }
     
-    const paymentIntent = await createPaymentIntent({
-      amount,
-      currency,
-      description,
-      metadata,
-      transactionId,
-      merchantId
-    });
+    const captureResult = await capturePayment(orderId, merchantId);
     
     res.json({
       ResponseCode: "0",
-      clientSecret: paymentIntent.clientSecret,
-      paymentIntentId: paymentIntent.paymentIntentId
+      captureId: captureResult.captureId,
+      status: captureResult.status,
+      orderId: captureResult.orderId
     });
   } catch (error) {
-    console.error('Error creating Stripe payment intent:', error);
+    console.error('Error capturing PayPal payment:', error);
     res.status(500).json({
       ResponseCode: "1",
-      errorMessage: error.message || "Failed to create payment intent"
+      errorMessage: error.message || "Failed to capture PayPal payment"
     });
   }
 });
 
-// Stripe webhook endpoint
-app.post("/stripe/webhook", express.raw({ type: 'application/json' }), async (req, res) => {
+// PayPal webhook endpoint
+app.post("/paypal/webhook", express.json(), async (req, res) => {
   try {
-    const sig = req.headers['stripe-signature'];
-    let event;
+    const webhookId = process.env.PAYPAL_WEBHOOK_ID || '3SK663420S952222B';
+    const event = req.body;
     
-    try {
-      // For webhook verification, we use a different key than for API calls
-      const stripeModule = require('stripe');
-      // Use a hardcoded key for testing - in production, use environment variable
-      const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || 'whsec_your_stripe_webhook_secret_here';
-      const stripeClient = stripeModule(process.env.STRIPE_SECRET_KEY || 'sk_test_51O2KBJFYIgdXRfgqGLqVGQJHRxBEJLcRgGZyUBbKGnMmzYAGxRHDQpLDDpbXwHKe3XRxvVMKWoAOUkrSzxCVTxGq00Jf9Qy1Jb');
-      
-      event = stripeClient.webhooks.constructEvent(
-        req.body,
-        sig,
-        webhookSecret
-      );
-    } catch (err) {
-      console.error('Stripe webhook signature verification failed:', err);
-      return res.status(400).send(`Webhook Error: ${err.message}`);
+    // Verify the webhook signature
+    const isValid = await verifyWebhookSignature(req.headers, JSON.stringify(event), webhookId);
+    
+    if (!isValid) {
+      console.error('PayPal webhook signature verification failed');
+      return res.status(400).send('Webhook signature verification failed');
     }
     
     // Handle the event
-    await handleStripeWebhook(event);
+    await handlePayPalWebhook(event);
     
     // Return a 200 response to acknowledge receipt of the event
     res.json({ received: true });
   } catch (error) {
-    console.error('Error handling Stripe webhook:', error);
+    console.error('Error handling PayPal webhook:', error);
     res.status(500).json({
       error: error.message || "Failed to process webhook"
     });
@@ -1179,33 +1215,39 @@ setInterval(async () => {
 }, 60 * 60 * 1000); // 1 hour
 
 // API key testing endpoints
-app.post("/test-stripe-key", async (req, res) => {
+app.post("/test-paypal-credentials", async (req, res) => {
   try {
-    const { secretKey } = req.body;
+    const { clientId, clientSecret } = req.body;
     
-    if (!secretKey || !secretKey.startsWith('sk_')) {
+    if (!clientId || !clientSecret) {
       return res.status(400).json({
         success: false,
-        error: "Invalid Stripe secret key format"
+        error: "Both PayPal Client ID and Client Secret are required"
       });
     }
     
-    // Try to create a Stripe instance with the provided key
-    const stripeInstance = stripe(secretKey);
-    
-    // Try to fetch something simple to validate the key
-    await stripeInstance.balance.retrieve();
-    
-    // If we got here, the key is valid
-    res.json({
-      success: true,
-      message: "Stripe API key is valid"
+    // Test the PayPal credentials
+    const result = await testCredentials({
+      clientId,
+      clientSecret
     });
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        message: "PayPal credentials are valid"
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: result.error || "Invalid PayPal credentials"
+      });
+    }
   } catch (error) {
-    console.error('Error testing Stripe key:', error);
+    console.error('Error testing PayPal credentials:', error);
     res.status(400).json({
       success: false,
-      error: error.message || "Invalid Stripe API key"
+      error: error.message || "Invalid PayPal credentials"
     });
   }
 });
