@@ -37,6 +37,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS ?
   process.env.ALLOWED_ORIGINS.split(',') : 
   [
     'http://localhost:3000',
+    'http://localhost:3001', // Added to fix CORS error
     'http://127.0.0.1:3000',
     'https://paynow-frontend.onrender.com',
     'https://paynow-chwp.onrender.com'

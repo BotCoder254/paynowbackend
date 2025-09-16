@@ -1,13 +1,12 @@
-const https = require('https');
 const axios = require('axios');
 
 /**
  * Send an SMS using the new SMS API
- * @param {string} message - The message to send
  * @param {string} phoneNumber - The recipient phone number
+ * @param {string} message - The message to send
  * @returns {Promise<boolean>} - Promise that resolves with success status
  */
-const sendSMS = async (message, phoneNumber) => {
+const sendSMS = async (phoneNumber, message) => {
     const url = 'http://167.172.14.50:4002/v1/send-sms';
 
     const requestBody = {

@@ -1,7 +1,6 @@
 const { doc, collection, query, where, getDocs, updateDoc, serverTimestamp, getDoc, addDoc } = require("firebase/firestore");
 const { db } = require("./firebase");
-const https = require('https');
-const moment = require('moment');
+const { sendSMS } = require('./smsService'); // Use the updated SMS service
 
 /**
  * Sends an SMS reminder for an unpaid payment link
@@ -18,51 +17,17 @@ const sendSMSReminder = async (phoneNumber, message) => {
       formattedPhone = "254" + formattedPhone;
     }
 
-    const data = JSON.stringify({
-      apiKey: 'f9e412887a42ff4938baa34971e0b096',
-      shortCode: 'VasPro',
-      message: message,
-      recipient: formattedPhone,
-      callbackURL: '',
-      enqueue: 1,
-      isScheduled: false,
-    });
-
-    const options = {
-      hostname: 'api.vaspro.co.ke',
-      port: 443,
-      path: '/v3/BulkSMS/api/create',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': data.length,
-      },
-    };
-
-    return new Promise((resolve, reject) => {
-      const smsReq = https.request(options, (smsRes) => {
-        let responseData = '';
-
-        smsRes.on('data', (chunk) => {
-          responseData += chunk;
-        });
-
-        smsRes.on('end', () => {
-          console.log('SMS reminder sent successfully:', responseData);
-          resolve(responseData);
-        });
-      });
-
-      smsReq.on('error', (error) => {
-        console.error('Error sending SMS reminder:', error);
-        reject(error);
-      });
-
-      smsReq.write(data);
-      smsReq.end();
-    });
+    // Use the new SMS service
+    const result = await sendSMS(formattedPhone, message);
+    
+    if (result) {
+      console.log('SMS reminder sent successfully');
+      return { success: true, message: 'SMS sent successfully' };
+    } else {
+      throw new Error('Failed to send SMS');
+    }
   } catch (error) {
-    console.error('SMS reminder sending error:', error);
+    console.error('Error sending SMS reminder:', error);
     throw error;
   }
 };
