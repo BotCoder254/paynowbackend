@@ -12,9 +12,9 @@ try {
   adminApp = admin.app();
 } catch (e) {
   adminApp = admin.initializeApp({
-    credential: admin.credential.cert(require('./twitterclone-47ebf-firebase-adminsdk-fbsvc-0a7000048b.json')),
+    credential: admin.credential.cert(require('./twitterclone-47ebf-firebase-adminsdk-fbsvc-63a25c95a5.json')),
     storageBucket: process.env.FIREBASE_STORAGE_BUCKET || "twitterclone-47ebf.appspot.com"
-  });
+  }, 'invoice-service');
 }
 
 // Get a reference to the storage service

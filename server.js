@@ -8,8 +8,55 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const stripe = require('stripe');
+const admin = require('firebase-admin');
+require('dotenv').config();
 const { doc, updateDoc, serverTimestamp, getDoc } = require("firebase/firestore");
 const { db } = require("./firebase");
+
+// Initialize Firebase Admin SDK
+if (!admin.apps.length) {
+  try {
+    // Try to use the valid service account file first
+    const serviceAccount = require('./twitterclone-47ebf-firebase-adminsdk-fbsvc-63a25c95a5.json');
+    
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+      databaseURL: "https://twitterclone-47ebf-default-rtdb.firebaseio.com",
+      storageBucket: "twitterclone-47ebf.appspot.com"
+    });
+    
+    console.log('Firebase Admin SDK initialized successfully with service account file');
+  } catch (error) {
+    console.log('Service account file not found, trying environment variables...');
+    
+    // Fallback to environment variables
+    const firebaseConfig = {
+      type: "service_account",
+      project_id: process.env.FIREBASE_PROJECT_ID || "twitterclone-47ebf",
+      private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
+      private_key: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+      client_email: process.env.FIREBASE_CLIENT_EMAIL,
+      client_id: process.env.FIREBASE_CLIENT_ID,
+      auth_uri: "https://accounts.google.com/o/oauth2/auth",
+      token_uri: "https://oauth2.googleapis.com/token",
+      auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
+      client_x509_cert_url: process.env.FIREBASE_CLIENT_X509_CERT_URL,
+      universe_domain: "googleapis.com"
+    };
+
+    if (firebaseConfig.private_key && firebaseConfig.client_email) {
+      admin.initializeApp({
+        credential: admin.credential.cert(firebaseConfig),
+        databaseURL: "https://twitterclone-47ebf-default-rtdb.firebaseio.com",
+        storageBucket: "twitterclone-47ebf.appspot.com"
+      });
+      console.log('Firebase Admin SDK initialized successfully with environment variables');
+    } else {
+      console.error('Firebase configuration not found. Please set up environment variables or provide a valid service account file.');
+      process.exit(1);
+    }
+  }
+}
 const { 
   sendOrderConfirmationEmail, 
   sendOrderStatusUpdateEmail, 
@@ -1462,6 +1509,132 @@ app.post("/test-mpesa-credentials", async (req, res) => {
       success: false,
       errorCode: errorCode || 'unknown',
       error: errorMessage || error.message || "Invalid M-Pesa credentials"
+    });
+  }
+});
+
+// SMS Forwarding endpoint
+app.post('/api/sms/forward', async (req, res) => {
+  try {
+    const { uid, idToken, smsMessage } = req.body;
+    
+    if (!uid || !idToken || !smsMessage) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: uid, idToken, smsMessage'
+      });
+    }
+    
+    // Verify Firebase ID token
+    const admin = require('firebase-admin');
+    let decodedToken;
+    try {
+      decodedToken = await admin.auth().verifyIdToken(idToken);
+      if (decodedToken.uid !== uid) {
+        return res.status(401).json({
+          success: false,
+          message: 'Token UID mismatch'
+        });
+      }
+    } catch (error) {
+      console.error('Error verifying ID token:', error);
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid ID token'
+      });
+    }
+    
+    // Store SMS message in Firestore
+    const smsData = {
+      ...smsMessage,
+      userId: uid,
+      forwardedAt: serverTimestamp(),
+      createdAt: serverTimestamp()
+    };
+    
+    const smsRef = await db.collection('sms_messages').add(smsData);
+    
+    console.log('SMS forwarded successfully:', {
+      smsId: smsRef.id,
+      userId: uid,
+      sender: smsMessage.sender,
+      isMpesa: smsMessage.isMpesa
+    });
+    
+    res.json({
+      success: true,
+      message: 'SMS forwarded successfully',
+      smsId: smsRef.id
+    });
+    
+  } catch (error) {
+    console.error('Error forwarding SMS:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to forward SMS',
+      error: error.message
+    });
+  }
+});
+
+// Get SMS messages for a user
+app.get('/api/sms/messages/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { idToken } = req.headers;
+    
+    if (!idToken) {
+      return res.status(401).json({
+        success: false,
+        message: 'ID token required'
+      });
+    }
+    
+    // Verify Firebase ID token
+    const admin = require('firebase-admin');
+    let decodedToken;
+    try {
+      decodedToken = await admin.auth().verifyIdToken(idToken);
+      if (decodedToken.uid !== userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Token UID mismatch'
+        });
+      }
+    } catch (error) {
+      console.error('Error verifying ID token:', error);
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid ID token'
+      });
+    }
+    
+    // Get SMS messages from Firestore
+    const snapshot = await db.collection('sms_messages')
+      .where('userId', '==', userId)
+      .orderBy('createdAt', 'desc')
+      .limit(50)
+      .get();
+    
+    const messages = [];
+    snapshot.forEach(doc => {
+      messages.push({
+        id: doc.id,
+        ...doc.data()
+      });
+    });
+    
+    res.json({
+      success: true,
+      messages: messages
+    });
+    
+  } catch (error) {
+    console.error('Error fetching SMS messages:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch SMS messages',
+      error: error.message
     });
   }
 });
