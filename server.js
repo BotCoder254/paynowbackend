@@ -66,7 +66,6 @@ const {
 const { processTransactionInvoice, storeCustomerInformation } = require('./invoiceService');
 const { checkUnpaidLinks, sendManualReminder } = require('./reminderService');
 // Payment services removed - PayPal and Paystack no longer supported
-const { sendPaymentLinkSMS, sendPaymentLinkEmailNotification, addCustomer } = require('./customerService');
 const { sendSMS } = require('./smsService');
 
 // Add environment variables for email configuration
