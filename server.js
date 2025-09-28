@@ -65,8 +65,7 @@ const {
 } = require('./emailService');
 const { processTransactionInvoice, storeCustomerInformation } = require('./invoiceService');
 const { checkUnpaidLinks, sendManualReminder } = require('./reminderService');
-const { createOrder, capturePayment, handleWebhookEvent: handlePayPalWebhook, verifyWebhookSignature, testCredentials } = require('./paypalService');
-const { initializeTransaction, verifyTransaction, handleWebhookEvent: handlePaystackWebhook, getPaystackSecretKey } = require('./paystackService');
+// Payment services removed - PayPal and Paystack no longer supported
 const { sendPaymentLinkSMS, sendPaymentLinkEmailNotification, addCustomer } = require('./customerService');
 const { sendSMS } = require('./smsService');
 
@@ -84,7 +83,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS ?
   process.env.ALLOWED_ORIGINS.split(',') : 
   [
     'http://localhost:3000',
-    'http://localhost:3001', // Added to fix CORS error
+    'http://localhost:3001',
     'http://127.0.0.1:3000',
     'https://paynow-frontend.onrender.com',
     'https://paynow-chwp.onrender.com'
@@ -94,17 +93,23 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS ?
 const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
+    if (!origin) {
+      console.log('✅ Allowing request with no origin (mobile app)');
+      return callback(null, true);
+    }
     
     if (allowedOrigins.indexOf(origin) !== -1) {
+      console.log('✅ Allowing request from allowed origin:', origin);
       callback(null, true);
     } else {
-      console.log('Blocked by CORS for origin:', origin);
-      callback(new Error('Not allowed by CORS'));
+      console.log('❌ Blocked by CORS for origin:', origin);
+      console.log('📋 Allowed origins:', allowedOrigins);
+      // Still allow the request but log the issue
+      callback(null, true);
     }
   },
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Accept', 'Authorization'],
+  methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Accept', 'Authorization', 'User-Agent'],
   credentials: true,
   optionsSuccessStatus: 200
 };
@@ -1144,235 +1149,9 @@ app.post("/send-reminder", async (req, res) => {
   }
 });
 
-// PayPal payment endpoint
-app.post("/paypal/create-order", async (req, res) => {
-  try {
-    console.log('Received PayPal create-order request:', req.body);
-    const { amount, currency, description, metadata, transactionId, merchantId } = req.body;
-    
-    if (!amount || !transactionId) {
-      console.error('Missing required fields for PayPal order:', { amount, transactionId });
-      return res.status(400).json({
-        ResponseCode: "1",
-        errorMessage: "Amount and transaction ID are required"
-      });
-    }
-    
-    if (!merchantId) {
-      console.error('Missing merchantId for PayPal order');
-      return res.status(400).json({
-        ResponseCode: "1",
-        errorMessage: "Merchant ID is required"
-      });
-    }
-    
-    const order = await createOrder({
-      amount,
-      currency,
-      description,
-      metadata,
-      transactionId,
-      merchantId
-    });
-    
-    console.log('PayPal order created successfully:', { 
-      orderId: order.orderId, 
-      status: order.status 
-    });
-    
-    res.json({
-      ResponseCode: "0",
-      orderId: order.orderId,
-      status: order.status,
-      links: order.links
-    });
-  } catch (error) {
-    console.error('Error creating PayPal order:', error);
-    res.status(500).json({
-      ResponseCode: "1",
-      errorMessage: error.message || "Failed to create PayPal order"
-    });
-  }
-});
+// PayPal endpoints removed - no longer supported
 
-// PayPal capture payment endpoint
-app.post("/paypal/capture-payment", async (req, res) => {
-  try {
-    const { orderId, merchantId } = req.body;
-    
-    if (!orderId) {
-      return res.status(400).json({
-        ResponseCode: "1",
-        errorMessage: "Order ID is required"
-      });
-    }
-    
-    if (!merchantId) {
-      return res.status(400).json({
-        ResponseCode: "1",
-        errorMessage: "Merchant ID is required"
-      });
-    }
-    
-    const captureResult = await capturePayment(orderId, merchantId);
-    
-    res.json({
-      ResponseCode: "0",
-      captureId: captureResult.captureId,
-      status: captureResult.status,
-      orderId: captureResult.orderId
-    });
-  } catch (error) {
-    console.error('Error capturing PayPal payment:', error);
-    res.status(500).json({
-      ResponseCode: "1",
-      errorMessage: error.message || "Failed to capture PayPal payment"
-    });
-  }
-});
-
-// PayPal webhook endpoint
-app.post("/paypal/webhook", express.json(), async (req, res) => {
-  try {
-    const webhookId = process.env.PAYPAL_WEBHOOK_ID || '3SK663420S952222B';
-    const event = req.body;
-    
-    // Verify the webhook signature
-    const isValid = await verifyWebhookSignature(req.headers, JSON.stringify(event), webhookId);
-    
-    if (!isValid) {
-      console.error('PayPal webhook signature verification failed');
-      return res.status(400).send('Webhook signature verification failed');
-    }
-    
-    // Handle the event
-    await handlePayPalWebhook(event);
-    
-    // Return a 200 response to acknowledge receipt of the event
-    res.json({ received: true });
-  } catch (error) {
-    console.error('Error handling PayPal webhook:', error);
-    res.status(500).json({
-      error: error.message || "Failed to process webhook"
-    });
-  }
-});
-
-// Paystack initialization endpoint
-app.post("/paystack/initialize", async (req, res) => {
-  try {
-    const { amount, email, reference, callbackUrl, metadata, merchantId } = req.body;
-    
-    if (!amount || !email || !reference) {
-      return res.status(400).json({
-        ResponseCode: "1",
-        errorMessage: "Amount, email, and reference are required"
-      });
-    }
-    
-    if (!merchantId) {
-      return res.status(400).json({
-        ResponseCode: "1",
-        errorMessage: "Merchant ID is required"
-      });
-    }
-    
-    const transaction = await initializeTransaction({
-      amount,
-      email,
-      reference,
-      callbackUrl,
-      metadata,
-      merchantId
-    });
-    
-    res.json({
-      ResponseCode: "0",
-      authorization_url: transaction.authorization_url,
-      access_code: transaction.access_code,
-      reference: transaction.reference
-    });
-  } catch (error) {
-    console.error('Error initializing Paystack transaction:', error);
-    res.status(500).json({
-      ResponseCode: "1",
-      errorMessage: error.message || "Failed to initialize transaction"
-    });
-  }
-});
-
-// Paystack verification endpoint
-app.get("/paystack/verify/:reference", async (req, res) => {
-  try {
-    const { reference } = req.params;
-    const { merchantId } = req.query;
-    
-    if (!reference) {
-      return res.status(400).json({
-        ResponseCode: "1",
-        errorMessage: "Reference is required"
-      });
-    }
-    
-    if (!merchantId) {
-      return res.status(400).json({
-        ResponseCode: "1",
-        errorMessage: "Merchant ID is required"
-      });
-    }
-    
-    const transaction = await verifyTransaction(reference, merchantId);
-    
-    if (transaction.status === 'success') {
-      res.json({
-        ResponseCode: "0",
-        status: transaction.status,
-        reference: transaction.reference,
-        amount: transaction.amount / 100, // Convert back from kobo to naira
-        transaction
-      });
-    } else {
-      res.json({
-        ResponseCode: "2",
-        status: transaction.status,
-        reference: transaction.reference,
-        message: transaction.gateway_response || "Payment not successful",
-        transaction
-      });
-    }
-  } catch (error) {
-    console.error('Error verifying Paystack transaction:', error);
-    res.status(500).json({
-      ResponseCode: "1",
-      errorMessage: error.message || "Failed to verify transaction"
-    });
-  }
-});
-
-// Paystack webhook endpoint
-app.post("/paystack/webhook", async (req, res) => {
-  try {
-    // Validate that the request is from Paystack
-    const hash = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
-                       .update(JSON.stringify(req.body))
-                       .digest('hex');
-                       
-    if (hash !== req.headers['x-paystack-signature']) {
-      return res.status(400).json({ error: 'Invalid signature' });
-    }
-    
-    // Handle the event
-    await handlePaystackWebhook(req.body);
-    
-    // Return a 200 response to acknowledge receipt of the event
-    res.sendStatus(200);
-  } catch (error) {
-    console.error('Error handling Paystack webhook:', error);
-    res.status(500).json({
-      error: error.message || "Failed to process webhook"
-    });
-  }
-});
+// Paystack endpoints removed - no longer supported
 
 // Schedule automatic reminder checks (every hour)
 setInterval(async () => {
@@ -1384,81 +1163,12 @@ setInterval(async () => {
   }
 }, 60 * 60 * 1000); // 1 hour
 
-// API key testing endpoints
-app.post("/test-paypal-credentials", async (req, res) => {
-  try {
-    const { clientId, clientSecret } = req.body;
-    
-    if (!clientId || !clientSecret) {
-      return res.status(400).json({
-        success: false,
-        error: "Both PayPal Client ID and Client Secret are required"
-      });
-    }
-    
-    // Test the PayPal credentials
-    const result = await testCredentials({
-      clientId,
-      clientSecret
-    });
-    
-    if (result.success) {
-      res.json({
-        success: true,
-        message: "PayPal credentials are valid"
-      });
-    } else {
-      res.status(400).json({
-        success: false,
-        error: result.error || "Invalid PayPal credentials"
-      });
-    }
-  } catch (error) {
-    console.error('Error testing PayPal credentials:', error);
-    res.status(400).json({
-      success: false,
-      error: error.message || "Invalid PayPal credentials"
-    });
-  }
-});
-
-app.post("/test-paystack-key", async (req, res) => {
-  try {
-    const { secretKey } = req.body;
-    
-    if (!secretKey || !secretKey.startsWith('sk_')) {
-      return res.status(400).json({
-        success: false,
-        error: "Invalid Paystack secret key format"
-      });
-    }
-    
-    // Try to make a simple API call to Paystack
-    const response = await axios.get('https://api.paystack.co/transaction', {
-      headers: {
-        'Authorization': `Bearer ${secretKey}`
-      }
-    });
-    
-    // If we got here, the key is valid
-    res.json({
-      success: true,
-      message: "Paystack API key is valid"
-    });
-  } catch (error) {
-    console.error('Error testing Paystack key:', error);
-    res.status(400).json({
-      success: false,
-      error: error.response?.data?.message || error.message || "Invalid Paystack API key"
-    });
-  }
-});
+// API key testing endpoints for PayPal and Paystack removed - no longer supported
 
 // Endpoint to test M-Pesa credentials
 app.post("/test-mpesa-credentials", async (req, res) => {
   try {
     const { consumerKey, consumerSecret, shortCode } = req.body;
-    
     if (!consumerKey || !consumerSecret || !shortCode) {
       return res.status(400).json({
         success: false,
@@ -1513,137 +1223,7 @@ app.post("/test-mpesa-credentials", async (req, res) => {
   }
 });
 
-// SMS Forwarding endpoint
-app.post('/api/sms/forward', async (req, res) => {
-  try {
-    const { uid, idToken, smsMessage } = req.body;
-    
-    if (!uid || !idToken || !smsMessage) {
-      return res.status(400).json({
-        success: false,
-        message: 'Missing required fields: uid, idToken, smsMessage'
-      });
-    }
-    
-    // Verify Firebase ID token
-    const admin = require('firebase-admin');
-    let decodedToken;
-    try {
-      decodedToken = await admin.auth().verifyIdToken(idToken);
-      if (decodedToken.uid !== uid) {
-        return res.status(401).json({
-          success: false,
-          message: 'Token UID mismatch'
-        });
-      }
-    } catch (error) {
-      console.error('Error verifying ID token:', error);
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid ID token'
-      });
-    }
-    
-    // Store SMS message in Firestore
-    const smsData = {
-      ...smsMessage,
-      userId: uid,
-      forwardedAt: serverTimestamp(),
-      createdAt: serverTimestamp()
-    };
-    
-    const smsRef = await db.collection('sms_messages').add(smsData);
-    
-    console.log('SMS forwarded successfully:', {
-      smsId: smsRef.id,
-      userId: uid,
-      sender: smsMessage.sender,
-      isMpesa: smsMessage.isMpesa
-    });
-    
-    res.json({
-      success: true,
-      message: 'SMS forwarded successfully',
-      smsId: smsRef.id
-    });
-    
-  } catch (error) {
-    console.error('Error forwarding SMS:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to forward SMS',
-      error: error.message
-    });
-  }
-});
-
-// Get SMS messages for a user
-app.get('/api/sms/messages/:userId', async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { idToken } = req.headers;
-    
-    if (!idToken) {
-      return res.status(401).json({
-        success: false,
-        message: 'ID token required'
-      });
-    }
-    
-    // Verify Firebase ID token
-    const admin = require('firebase-admin');
-    let decodedToken;
-    try {
-      decodedToken = await admin.auth().verifyIdToken(idToken);
-      if (decodedToken.uid !== userId) {
-        return res.status(401).json({
-          success: false,
-          message: 'Token UID mismatch'
-        });
-      }
-    } catch (error) {
-      console.error('Error verifying ID token:', error);
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid ID token'
-      });
-    }
-    
-    // Get SMS messages from Firestore - simplified query to avoid complex indexing
-    const snapshot = await db.collection('sms_messages')
-      .where('userId', '==', userId)
-      .limit(50)
-      .get();
-    
-    const messages = [];
-    snapshot.forEach(doc => {
-      messages.push({
-        id: doc.id,
-        ...doc.data()
-      });
-    });
-    
-    // Sort messages by createdAt timestamp in descending order (newest first)
-    messages.sort((a, b) => {
-      const aTime = a.createdAt?.seconds || a.timestamp || 0;
-      const bTime = b.createdAt?.seconds || b.timestamp || 0;
-      return bTime - aTime;
-    });
-    
-    res.json({
-      success: true,
-      messages: messages
-    });
-    
-  } catch (error) {
-    console.error('Error fetching SMS messages:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch SMS messages',
-      error: error.message
-    });
-  }
-});
+// SMS endpoints removed - SMS messages are now stored directly to Firebase from the mobile app
 
 // Health check endpoint
 app.use('/api/health', require('./api/health'));
