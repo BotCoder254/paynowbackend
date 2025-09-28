@@ -1609,10 +1609,9 @@ app.get('/api/sms/messages/:userId', async (req, res) => {
       });
     }
     
-    // Get SMS messages from Firestore
+    // Get SMS messages from Firestore - simplified query to avoid complex indexing
     const snapshot = await db.collection('sms_messages')
       .where('userId', '==', userId)
-      .orderBy('createdAt', 'desc')
       .limit(50)
       .get();
     
@@ -1622,6 +1621,13 @@ app.get('/api/sms/messages/:userId', async (req, res) => {
         id: doc.id,
         ...doc.data()
       });
+    });
+    
+    // Sort messages by createdAt timestamp in descending order (newest first)
+    messages.sort((a, b) => {
+      const aTime = a.createdAt?.seconds || a.timestamp || 0;
+      const bTime = b.createdAt?.seconds || b.timestamp || 0;
+      return bTime - aTime;
     });
     
     res.json({
